@@ -8,9 +8,9 @@ import requests
 import socket
 import random
 import json
-import subprocess
 from queue import Queue
 from wafw00f.main import WAFW00F
+import subprocess
 
 # Define the ASCII Art Banner
 BANNER = """
@@ -35,6 +35,14 @@ def print_banner():
     width = max(len(line) for line in banner_lines)
     centered_banner = "\n".join(line.center(width) for line in banner_lines)
     print(color + centered_banner + color_end)
+
+class CustomArgumentParser(argparse.ArgumentParser):
+    """
+    Custom ArgumentParser to print the banner along with the help message.
+    """
+    def print_help(self):
+        print_banner()  # Print the banner when -h or --help is called
+        super().print_help()  # Call the original help method
 
 def ping_target(target):
     """
@@ -150,7 +158,7 @@ def main(target, target_file, output_file, output_format, threads, rate_limit):
     save_results(results, output_file, output_format)
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(
+    parser = CustomArgumentParser(
         description="""
 Hunter-Seeker: A tool for detecting Web Application Firewalls (WAFs) 
 and associated domains for a list of targets (IPs/domains). 
@@ -161,7 +169,6 @@ Example usage:
 python hunter_seeker.py --target example.com --output_file results.csv --output_format csv
 python hunter_seeker.py --target_file targets.txt --output_file results.json --output_format json
 
-Author: xBurningGiraffe
         """
     )
     parser.add_argument(
