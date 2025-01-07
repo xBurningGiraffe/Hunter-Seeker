@@ -8,9 +8,9 @@ import requests
 import socket
 import random
 import json
+import subprocess
 from queue import Queue
 from wafw00f.main import WAFW00F
-import subprocess
 
 # Define the ASCII Art Banner
 BANNER = """
@@ -36,31 +36,16 @@ def print_banner():
     centered_banner = "\n".join(line.center(width) for line in banner_lines)
     print(color + centered_banner + color_end)
 
-def basic_enumeration(target):
+def ping_target(target):
     """
-    Performs basic enumeration such as ping check, HTTP headers, and server banner.
+    Attempts to ping a target and returns True if reachable, False otherwise.
     """
-    result = {
-        "Ping Reachable": "No",
-        "HTTP Headers": "N/A",
-        "Server Banner": "N/A"
-    }
     try:
-        # Ping check
-        ping_cmd = ["ping", "-c", "1", target] if not target.replace(".", "").isdigit() else ["ping", "-c", "1", target]
-        ping = subprocess.run(ping_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        if ping.returncode == 0:
-            result["Ping Reachable"] = "Yes"
-
-        # HTTP headers and server banner
-        url = f"http://{target}"  # Use http by default, extend to https as needed
-        response = requests.head(url, timeout=5)
-        result["HTTP Headers"] = dict(response.headers)
-        result["Server Banner"] = response.headers.get("Server", "N/A")
-    except Exception as e:
-        result["Ping Reachable"] = "Error"
-        result["HTTP Headers"] = str(e)
-    return result
+        cmd = ["ping", "-c", "1", target]  # For Linux/Mac. Use "-n" for Windows.
+        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+        return result.returncode == 0
+    except Exception:
+        return False
 
 def detect_waf_and_domains(target, results, rate_limit):
     """
@@ -73,32 +58,30 @@ def detect_waf_and_domains(target, results, rate_limit):
         except socket.herror:
             domain = "Not Resolvable"
 
-        # Basic Enumeration
-        enumeration = basic_enumeration(target)
+        # Check if the target is reachable via ping
+        is_reachable = ping_target(target)
 
         # WAF Detection
         url = f"http://{target}"  # Change to https if necessary
         print(f"Scanning {target}...")
-        waf_detector = WafW00F(target=url)
+        waf_detector = WAFW00F(target=url)
         waf_detector.identwaf()
-        waf_results = waf_detector.get_detected_waf()
+        detected_wafs = waf_detector.knowledge['wafname']
 
         results.append({
             "Target": target,
             "Domain/Subdomain": domain,
-            "WAF Detected": "Yes" if waf_results else "No",
-            "WAF Type": ", ".join(waf_results) if waf_results else "N/A",
-            **enumeration
+            "Ping Reachable": "Yes" if is_reachable else "No",
+            "WAF Detected": "Yes" if detected_wafs else "No",
+            "WAF Type": ", ".join(detected_wafs) if detected_wafs else "N/A"
         })
     except Exception as e:
         results.append({
             "Target": target,
-            "Domain/Subdomain": "Error" if "domain" not in locals() else domain,
-            "WAF Detected": "Error",
-            "WAF Type": str(e),
+            "Domain/Subdomain": "Error",
             "Ping Reachable": "Error",
-            "HTTP Headers": "Error",
-            "Server Banner": "Error"
+            "WAF Detected": "Error",
+            "WAF Type": str(e)
         })
     finally:
         time.sleep(rate_limit)
@@ -131,17 +114,17 @@ def save_results(results, output_file, output_format):
                 txtfile.write(str(result) + "\n")
     print(f"Results saved to {output_file} in {output_format.upper()} format.")
 
-def main(target, output_file, output_format, threads, rate_limit):
+def main(target, target_file, output_file, output_format, threads, rate_limit):
     """
     Main function to manage target enumeration and WAF detection.
     """
     print_banner()
 
-    # Parse input target
-    if target.endswith(".txt"):  # File input
-        with open(target, 'r') as file:
+    # Parse input target or file
+    if target_file:
+        with open(target_file, 'r') as file:
             targets = [line.strip() for line in file if line.strip()]
-    else:  # Single IP or domain
+    else:
         targets = [target]
 
     # Queue for targets
@@ -175,17 +158,23 @@ Supports multithreading and rate limiting with flexible output formats.
         """,
         epilog="""
 Example usage:
-python hunter_seeker.py target.txt results.csv --output_format csv --threads 10 --rate_limit 0.5
+python hunter_seeker.py --target example.com --output_file results.csv --output_format csv
+python hunter_seeker.py --target_file targets.txt --output_file results.json --output_format json
 
 Author: xBurningGiraffe
         """
     )
     parser.add_argument(
-        "target",
-        help="Single IP, domain, or path to a file containing multiple targets (one per line)."
+        "--target",
+        help="Single IP or domain to scan."
     )
     parser.add_argument(
-        "output_file",
+        "--target_file",
+        help="Path to a file containing multiple targets (one per line)."
+    )
+    parser.add_argument(
+        "--output_file",
+        required=True,
         help="Path to save the output results."
     )
     parser.add_argument(
@@ -208,4 +197,11 @@ Author: xBurningGiraffe
     )
 
     args = parser.parse_args()
-    main(args.target, args.output_file, args.output_format, args.threads, args.rate_limit)
+
+    # Validate input arguments
+    if not args.target and not args.target_file:
+        print("Error: You must specify either --target or --target_file.")
+        parser.print_help()
+        exit(1)
+
+    main(args.target, args.target_file, args.output_file, args.output_format, args.threads, args.rate_limit)
