@@ -42,7 +42,7 @@ def ping_target(target):
 
 def get_protocol(target):
     """
-    Determines if the target supports HTTPS. Falls back to HTTP if HTTPS fails.
+    Defaults to HTTPS. Falls back to HTTP only if HTTPS fails.
     """
     try:
         # Test HTTPS connection
@@ -50,78 +50,79 @@ def get_protocol(target):
         if response.status_code < 400:
             return "https"
     except requests.RequestException:
-        pass
+        print(f"Warning: HTTPS failed for {target}. Falling back to HTTP.")
+        return "http"  # Fall back to HTTP if HTTPS fails
 
-    # Default to HTTP if HTTPS fails
-    return "http"
+    return "https"  # Default to HTTPS
+
 
 def detect_waf_and_domains(target, results, rate_limit):
     """
-    Detects if a WAF is present for a given target and performs basic enumeration.
-    Handles HTTP/HTTPS determination dynamically.
+    Detects if a WAF is present for the given IP and any domains resolved via reverse DNS lookup.
+    Tests both the IP address and the resolved domains.
     """
     try:
-        # Determine if the target supports HTTPS or fallback to HTTP
-        protocol = get_protocol(target)
-        url = f"{protocol}://{target}"  # Construct URL with the appropriate protocol
-        print(f"Scanning {url}...")
-
-        # Reverse DNS Lookup
+        # Resolve any domains associated with the IP
         try:
-            domain = socket.gethostbyaddr(target)[0]
+            resolved_domain = socket.gethostbyaddr(target)[0]
         except socket.herror:
-            domain = "Not Resolvable"
+            resolved_domain = None
 
-        # Check if the target is reachable via ping
-        is_reachable = ping_target(target)
+        # Protocol determination (default to HTTPS, fallback to HTTP)
+        def test_target(target_to_test):
+            protocol = get_protocol(target_to_test)
+            url = f"{protocol}://{target_to_test}"
+            print(f"Scanning {url}...")
 
-        # WAF Detection
-        waf_detector = WAFW00F(target=url)
-        waf_detector.identwaf()
-        detected_wafs = waf_detector.knowledge['wafname']
+            waf_detector = WAFW00F(target=url)
+            waf_detector.identwaf()
+            detected_wafs = waf_detector.knowledge['wafname']
+            return {
+                "Target": target_to_test,
+                "Protocol": protocol,
+                "Ping Reachable": "Yes" if ping_target(target_to_test) else "No",
+                "WAF Detected": "Yes" if detected_wafs else "No",
+                "WAF Type": ", ".join(detected_wafs) if detected_wafs else "N/A"
+            }
 
-        # Append results
-        results.append({
-            "Target": target,
-            "Protocol": protocol,
-            "Domain/Subdomain": domain,
-            "Ping Reachable": "Yes" if is_reachable else "No",
-            "WAF Detected": "Yes" if detected_wafs else "No",
-            "WAF Type": ", ".join(detected_wafs) if detected_wafs else "N/A"
-        })
+        # Test the IP address
+        results.append(test_target(target))
+
+        # If a domain was resolved, test it as well
+        if resolved_domain:
+            results.append(test_target(resolved_domain))
 
     except requests.exceptions.ConnectTimeout:
-        print(f"Timeout: Unable to connect to {target} ({protocol})")
+        print(f"Timeout: Unable to connect to {target}")
         results.append({
             "Target": target,
-            "Protocol": protocol,
-            "Domain/Subdomain": "N/A",
+            "Protocol": "N/A",
             "Ping Reachable": "No",
             "WAF Detected": "Error",
             "WAF Type": "Connection Timeout"
         })
     except requests.exceptions.ConnectionError as e:
-        print(f"Connection Error for {target} ({protocol}): {e}")
+        print(f"Connection Error for {target}: {e}")
         results.append({
             "Target": target,
-            "Protocol": protocol,
-            "Domain/Subdomain": "N/A",
+            "Protocol": "N/A",
             "Ping Reachable": "No",
             "WAF Detected": "Error",
-            "WAF Type": "Connection Reset/Error"
+            "WAF Type": "Connection Error"
         })
     except Exception as e:
         print(f"Something went wrong for {target}: {e}")
         results.append({
             "Target": target,
-            "Protocol": protocol,
-            "Domain/Subdomain": "Error",
+            "Protocol": "N/A",
             "Ping Reachable": "Error",
             "WAF Detected": "Error",
             "WAF Type": str(e)
         })
     finally:
         time.sleep(rate_limit)
+
+
 
 
 
@@ -186,12 +187,12 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(1)
 
-parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.")
-parser.add_argument("-t", "--target", help="Single IP or domain to scan.")
-parser.add_argument("--target_file", help="Path to a file containing multiple targets (one per line).")
-parser.add_argument("--output_file", required=True, help="Path to save the output results (extension determines format: .csv, .json, .txt).")
-parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
-parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
+    parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.")
+    parser.add_argument("-t", "--target", help="Single IP or domain to scan.")
+    parser.add_argument("-f", "--target_file", help="Path to a file containing multiple targets (one per line).")
+    parser.add_argument("-o", "--output_file", required=True, help="Path to save the output results (extension determines format: .csv, .json, .txt).")
+    parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
+    parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
 
 
     args = parser.parse_args()
