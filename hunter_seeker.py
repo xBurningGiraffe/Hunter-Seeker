@@ -11,8 +11,8 @@ import json
 from queue import Queue
 from wafw00f.main import WAFW00F
 import subprocess
+import sys
 
-# Define the ASCII Art Banner
 BANNER = """
 ██   ██ ██    ██ ███    ██ ████████ ███████ ██████        ███████ ███████ ███████ ██   ██ ███████ ██████  
 ██   ██ ██    ██ ████   ██    ██    ██      ██   ██       ██      ██      ██      ██  ██  ██      ██   ██ 
@@ -25,54 +25,26 @@ BANNER = """
 """
 
 def print_banner():
-    """
-    Prints the ASCII banner in a random color and centers it.
-    """
     colors = ["\033[91m", "\033[92m", "\033[93m", "\033[94m", "\033[95m", "\033[96m", "\033[97m"]
-    color_end = "\033[0m"
-    color = random.choice(colors)
-    banner_lines = BANNER.splitlines()
-    width = max(len(line) for line in banner_lines)
-    centered_banner = "\n".join(line.center(width) for line in banner_lines)
-    print(color + centered_banner + color_end)
+    print(random.choice(colors) + BANNER + "\033[0m")
 
 class CustomArgumentParser(argparse.ArgumentParser):
-    """
-    Custom ArgumentParser to print the banner along with the help message.
-    """
     def print_help(self):
-        print_banner()  # Print the banner when -h or --help is called
-        super().print_help()  # Call the original help method
+        print_banner()
+        super().print_help()
 
 def ping_target(target):
-    """
-    Attempts to ping a target and returns True if reachable, False otherwise.
-    """
     try:
-        cmd = ["ping", "-c", "1", target]  # For Linux/Mac. Use "-n" for Windows.
-        result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-        return result.returncode == 0
+        cmd = ["ping", "-c", "1", target]
+        return subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0
     except Exception:
         return False
 
 def detect_waf_and_domains(target, results, rate_limit):
-    """
-    Detects if a WAF is present for a given target and performs basic enumeration.
-    """
     try:
-        # Reverse DNS Lookup for domains
-        try:
-            domain = socket.gethostbyaddr(target)[0]
-        except socket.herror:
-            domain = "Not Resolvable"
-
-        # Check if the target is reachable via ping
+        domain = socket.gethostbyaddr(target)[0] if socket.gethostbyaddr(target) else "Not Resolvable"
         is_reachable = ping_target(target)
-
-        # WAF Detection
-        url = f"http://{target}"  # Change to https if necessary
-        print(f"Scanning {target}...")
-        waf_detector = WAFW00F(target=url)
+        waf_detector = WAFW00F(target=f"http://{target}")
         waf_detector.identwaf()
         detected_wafs = waf_detector.knowledge['wafname']
 
@@ -95,120 +67,65 @@ def detect_waf_and_domains(target, results, rate_limit):
         time.sleep(rate_limit)
 
 def worker(queue, results, rate_limit):
-    """
-    Worker thread function to process targets from the queue.
-    """
     while not queue.empty():
-        target = queue.get()
-        detect_waf_and_domains(target, results, rate_limit)
+        detect_waf_and_domains(queue.get(), results, rate_limit)
         queue.task_done()
 
 def save_results(results, output_file, output_format):
-    """
-    Save results in the specified format: CSV, JSON, or TXT.
-    """
-    if output_format == "csv":
-        with open(output_file, 'w', newline='') as csvfile:
-            fieldnames = results[0].keys()
-            writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+    with open(output_file, 'w', newline='') as outfile:
+        if output_format == "csv":
+            writer = csv.DictWriter(outfile, fieldnames=results[0].keys())
             writer.writeheader()
             writer.writerows(results)
-    elif output_format == "json":
-        with open(output_file, 'w') as jsonfile:
-            json.dump(results, jsonfile, indent=4)
-    elif output_format == "txt":
-        with open(output_file, 'w') as txtfile:
+        elif output_format == "json":
+            json.dump(results, outfile, indent=4)
+        else:
             for result in results:
-                txtfile.write(str(result) + "\n")
+                outfile.write(str(result) + "\n")
     print(f"Results saved to {output_file} in {output_format.upper()} format.")
 
-def main(target, target_file, output_file, output_format, threads, rate_limit):
-    """
-    Main function to manage target enumeration and WAF detection.
-    """
+def main(args):
     print_banner()
-
-    # Parse input target or file
-    if target_file:
-        with open(target_file, 'r') as file:
+    targets = []
+    if args.target_file:
+        with open(args.target_file, 'r') as file:
             targets = [line.strip() for line in file if line.strip()]
-    else:
-        targets = [target]
+    elif args.target:
+        targets = [args.target]
 
-    # Queue for targets
     queue = Queue()
-    for t in targets:
-        queue.put(t)
+    for target in targets:
+        queue.put(target)
 
-    # Results list
     results = []
+    threads = [threading.Thread(target=worker, args=(queue, results, args.rate_limit)) for _ in range(args.threads)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
 
-    # Create threads
-    thread_list = []
-    for _ in range(threads):
-        t = threading.Thread(target=worker, args=(queue, results, rate_limit))
-        t.start()
-        thread_list.append(t)
-
-    # Wait for threads to finish
-    for t in thread_list:
-        t.join()
-
-    # Save results
-    save_results(results, output_file, output_format)
+    save_results(results, args.output_file, args.output_format)
 
 if __name__ == "__main__":
-    parser = CustomArgumentParser(
-        description="""
-Hunter-Seeker: A tool for detecting Web Application Firewalls (WAFs) 
-and associated domains for a list of targets (IPs/domains). 
-Supports multithreading and rate limiting with flexible output formats.
-        """,
-        epilog="""
-Example usage:
-python hunter_seeker.py --target example.com --output_file results.csv --output_format csv
-python hunter_seeker.py --target_file targets.txt --output_file results.json --output_format json
+    if len(sys.argv) == 1:
+        print_banner()
+        parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.", epilog="Example: python hunter_seeker.py --target example.com --output_file results.csv")
+        parser.print_help()
+        sys.exit(1)
 
-        """
-    )
-    parser.add_argument(
-        "--target",
-        help="Single IP or domain to scan."
-    )
-    parser.add_argument(
-        "--target_file",
-        help="Path to a file containing multiple targets (one per line)."
-    )
-    parser.add_argument(
-        "--output_file",
-        required=True,
-        help="Path to save the output results."
-    )
-    parser.add_argument(
-        "--output_format",
-        choices=["csv", "json", "txt"],
-        default="csv",
-        help="Specify the output format: csv, json, or txt (default: csv)."
-    )
-    parser.add_argument(
-        "--threads",
-        type=int,
-        default=5,
-        help="Number of threads to use for scanning (default: 5)."
-    )
-    parser.add_argument(
-        "--rate_limit",
-        type=float,
-        default=1.0,
-        help="Rate limit (in seconds) between requests to avoid overloading (default: 1.0)."
-    )
+    parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.", epilog="Example: python hunter_seeker.py --target_file targets.txt --output_file results.json")
+    parser.add_argument("--target", help="Single IP or domain to scan.")
+    parser.add_argument("--target_file", help="Path to a file containing multiple targets (one per line).")
+    parser.add_argument("--output_file", required=True, help="Path to save the output results.")
+    parser.add_argument("--output_format", choices=["csv", "json", "txt"], default="csv", help="Output format: csv, json, or txt.")
+    parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
+    parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
 
     args = parser.parse_args()
 
-    # Validate input arguments
     if not args.target and not args.target_file:
-        print("Error: You must specify either --target or --target_file.")
+        print("Error: Specify either --target or --target_file.")
         parser.print_help()
-        exit(1)
+        sys.exit(1)
 
-    main(args.target, args.target_file, args.output_file, args.output_format, args.threads, args.rate_limit)
+    main(args)
