@@ -135,7 +135,7 @@ def worker(queue, results, rate_limit):
 def save_results(results, output_file):
     """
     Save results based on the file extension in the output_file argument.
-    Supports CSV, JSON, and TXT.
+    Supports CSV, JSON, and TXT. JSON output is pretty-printed.
     """
     extension = output_file.split('.')[-1].lower()  # Get file extension
 
@@ -146,7 +146,7 @@ def save_results(results, output_file):
             writer.writerows(results)
     elif extension == "json":
         with open(output_file, 'w') as jsonfile:
-            json.dump(results, jsonfile, indent=4)
+            json.dump(results, jsonfile, indent=4)  # Pretty-print JSON
     elif extension == "txt":
         with open(output_file, 'w') as txtfile:
             for result in results:
@@ -155,6 +155,7 @@ def save_results(results, output_file):
         raise ValueError(f"Unsupported file format: {extension}")
 
     print(f"Results saved to {output_file} in {extension.upper()} format.")
+
 
 
 def main(args):
