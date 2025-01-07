@@ -7,7 +7,7 @@ import socket
 import random
 import json
 from queue import Queue
-from wafw00f.main import WafW00F
+from wafw00f.main import WAFW00F
 import subprocess
 
 # Define the ASCII Art Banner
