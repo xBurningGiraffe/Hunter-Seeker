@@ -191,7 +191,7 @@ if __name__ == "__main__":
     parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.")
     parser.add_argument("-t", "--target", help="Single IP or domain to scan.")
     parser.add_argument("-f", "--target_file", help="Path to a file containing multiple targets (one per line).")
-    parser.add_argument("-o", "--output_file", required=True, help="Path to save the output results (extension determines format: .csv, .json, .txt).")
+    parser.add_argument("-o", "--output_file", help="Path to save the output results (extension determines format: .csv, .json, .txt).")
     parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
     parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
 
