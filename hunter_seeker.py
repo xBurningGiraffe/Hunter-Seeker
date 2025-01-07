@@ -131,18 +131,30 @@ def worker(queue, results, rate_limit):
         detect_waf_and_domains(queue.get(), results, rate_limit)
         queue.task_done()
 
-def save_results(results, output_file, output_format):
-    with open(output_file, 'w', newline='') as outfile:
-        if output_format == "csv":
-            writer = csv.DictWriter(outfile, fieldnames=results[0].keys())
+def save_results(results, output_file):
+    """
+    Save results based on the file extension in the output_file argument.
+    Supports CSV, JSON, and TXT.
+    """
+    extension = output_file.split('.')[-1].lower()  # Get file extension
+
+    if extension == "csv":
+        with open(output_file, 'w', newline='') as csvfile:
+            writer = csv.DictWriter(csvfile, fieldnames=results[0].keys())
             writer.writeheader()
             writer.writerows(results)
-        elif output_format == "json":
-            json.dump(results, outfile, indent=4)
-        else:
+    elif extension == "json":
+        with open(output_file, 'w') as jsonfile:
+            json.dump(results, jsonfile, indent=4)
+    elif extension == "txt":
+        with open(output_file, 'w') as txtfile:
             for result in results:
-                outfile.write(str(result) + "\n")
-    print(f"Results saved to {output_file} in {output_format.upper()} format.")
+                txtfile.write(str(result) + "\n")
+    else:
+        raise ValueError(f"Unsupported file format: {extension}")
+
+    print(f"Results saved to {output_file} in {extension.upper()} format.")
+
 
 def main(args):
     print_banner()
@@ -164,7 +176,8 @@ def main(args):
     for thread in threads:
         thread.join()
 
-    save_results(results, args.output_file, args.output_format)
+    save_results(results, args.output_file)
+
 
 if __name__ == "__main__":
     if len(sys.argv) == 1:
@@ -173,13 +186,13 @@ if __name__ == "__main__":
         parser.print_help()
         sys.exit(1)
 
-    parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.", epilog="Example: python hunter_seeker.py --target_file targets.txt --output_file results.json")
-    parser.add_argument("-t", "--target", help="Single IP or domain to scan.")
-    parser.add_argument("-f", "--target_file", help="Path to a file containing multiple targets (one per line).")
-    parser.add_argument("-o", "--output_file", required=True, help="Path to save the output results.")
-    parser.add_argument("--output_format", choices=["csv", "json", "txt"], default="csv", help="Output format: csv, json, or txt.")
-    parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
-    parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
+parser = CustomArgumentParser(description="Hunter-Seeker: Detect WAFs and enumerate targets.")
+parser.add_argument("-t", "--target", help="Single IP or domain to scan.")
+parser.add_argument("--target_file", help="Path to a file containing multiple targets (one per line).")
+parser.add_argument("--output_file", required=True, help="Path to save the output results (extension determines format: .csv, .json, .txt).")
+parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
+parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
+
 
     args = parser.parse_args()
 
