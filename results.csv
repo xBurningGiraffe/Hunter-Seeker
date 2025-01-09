@@ -1,2 +1,0 @@
-Target,Protocol,Domain/Subdomain,Ping Reachable,WAF Detected,WAF Type
-mskcc.org,https,104.18.7.212,Yes,Yes,Cloudflare (Cloudflare Inc.)

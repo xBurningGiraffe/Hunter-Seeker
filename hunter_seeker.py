@@ -1,3 +1,5 @@
+#!/usr/bin/env python3
+
 import threading
 import time
 import csv
@@ -118,7 +120,7 @@ def detect_waf_and_domains(target, results, rate_limit, timeout):
         if any(r["Target"] == target and r["WAF Detected"] == "Yes" for r in results):
             print(f"Read Timeout for {target}, but WAF detection succeeded.")
         else:
-            print(f"Read Timeout: The server at {target} did not respond in time.")
+            print(f"Read Timeout: The server at {target} did not cat rrespond in time.")
             results.append({
                 "Target": target,
                 "Protocol": protocol,
@@ -155,9 +157,12 @@ def detect_waf_and_domains(target, results, rate_limit, timeout):
 
 def worker(queue, results, rate_limit, timeout):
     while not queue.empty():
-        target = queue.get()
-        detect_waf_and_domains(target, results, rate_limit, timeout)
-        queue.task_done()
+        try:
+            target = queue.get()
+            detect_waf_and_domains(target, results, rate_limit, timeout)
+        finally:
+            queue.task_done()
+
 
 def save_results(results, output_file):
     """
@@ -186,18 +191,27 @@ def save_results(results, output_file):
 def main(args):
     print_banner()
 
-    # Set default output file if none is provided
+    # Determine the output file
     output_file = args.output_file if args.output_file else "results.csv"
 
+    # Load targets
     targets = []
-    if args.target_file:
-        with open(args.target_file, 'r') as file:
-            targets = [line.strip() for line in file if line.strip()]
-    elif args.target:
-        targets = [args.target]
+    if args.resume:
+    # Load targets from the resume file
+        try:
+            with open("resume_targets.txt", "r") as file:
+                targets = [line.strip() for line in file if line.strip()]
+            if not targets:
+                print("Error: Resume file is empty. Please start a new scan.")
+                sys.exit(1)
+            print(f"Resuming from the last saved state with {len(targets)} targets...")
+        except FileNotFoundError:
+            print("Error: No resume file found. Please start a new scan.")
+            sys.exit(1)
+
 
     if not targets:
-        print("Error: No targets specified. Use --target or --target_file.")
+        print("Error: No targets specified.")
         sys.exit(1)
 
     queue = Queue()
@@ -205,16 +219,37 @@ def main(args):
         queue.put(target)
 
     results = []
-    threads = [
-        threading.Thread(target=worker, args=(queue, results, args.rate_limit, args.timeout))
-        for _ in range(args.threads)
-    ]
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join()
 
+    try:
+        # Create threads
+        threads = [
+            threading.Thread(target=worker, args=(queue, results, args.rate_limit, args.timeout))
+            for _ in range(args.threads)
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join()
+
+    except KeyboardInterrupt:
+        print("\nScan paused. Saving unprocessed targets...")
+        # Save remaining targets to resume file
+        with open("resume_targets.txt", "w") as file:
+            while not queue.empty():
+                file.write(queue.get() + "\n")
+        print("Unprocessed targets saved to resume_targets.txt.")
+        sys.exit(1)  # Exit gracefully
+
+    # Save results
     save_results(results, output_file)
+
+    # Clear the resume file if the scan completes
+    if not args.resume and not queue.unfinished_tasks:
+        try:
+            os.remove("resume_targets.txt")
+        except FileNotFoundError:
+            pass
+
 
 
 if __name__ == "__main__":
@@ -230,6 +265,9 @@ if __name__ == "__main__":
     parser.add_argument("--threads", type=int, default=5, help="Number of threads to use (default: 5).")
     parser.add_argument("--rate_limit", type=float, default=1.0, help="Rate limit (seconds) between requests (default: 1.0).")
     parser.add_argument("--timeout", type=int, default=7, help="Timeout (in seconds) for HTTP/HTTPS requests (default: 7 seconds).")
+    parser.add_argument("-r", "--resume", action="store_true", help="Resume a previously paused scan from the last saved state."
+)
+
 
     args = parser.parse_args()
 
